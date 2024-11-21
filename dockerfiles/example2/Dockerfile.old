@@ -1,0 +1,19 @@
+FROM ubuntu
+
+RUN useradd userapp --no-create-home --no-user-group
+RUN mkdir app
+
+WORKDIR /app
+
+USER userapp
+
+COPY --chown=userapp --chmod=544 start.sh /app/
+COPY --chown=userapp --chmod=544 start2.sh /app/
+
+# shell form
+#CMD sleep 1d
+# EXEC form
+#CMD ["sh","-c","sleep 1d"]
+
+ENTRYPOINT ["sh","-c"]
+CMD ["/app/start.sh"]

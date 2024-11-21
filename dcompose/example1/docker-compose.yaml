@@ -1,0 +1,98 @@
+name: miapp
+
+services:
+  web:
+    extends:
+      file: services/web.yaml
+      service: web
+    ports:
+      - ${WEBPORT}:80
+
+
+  backend:
+    image: ubuntu
+    container_name: backend1
+    command: ["sh", "-c", "sleep 1d"]
+    networks:
+      - miappnet
+
+  web2:
+    image: nginx
+    container_name: web21
+    ports:
+      - 9090:70
+    volumes:
+      - type: bind
+        source: files/index.html
+        target: /usr/share/nginx/html/index.html
+    networks:
+      - miappnet
+    configs:
+      - source: nginx_default2
+        target: /etc/nginx/conf.d/default.conf
+    healthcheck:
+      test: ["CMD","curl","-f","http://localhost:70"]
+      interval: 5s # verificar la salud del srv cada x s
+      timeout: 5s # timeout del comando de verificacion
+      retries: 5 # numero de intentos antes de determinar la salud del servicio
+      start_period: 5s # tiempo en que inicia la verificacion 
+      #disable: true
+    #restart: always # servicio reinicia si cae por cualquier situacion
+    #restart: on-failure # servicio reinicia si el proceso del contenedor se detiene por error
+    #restart: none
+
+
+  myapp:
+    container_name: myapp
+    build: 
+      context: app
+      dockerfile: Dockerfile
+    ports:
+      - 9999:8080
+
+
+
+  apppy:
+    image: envvar
+    container_name: envvar
+    ports:
+      - 7070:8888
+    environment:
+      - APP_COLOR=green
+      - CLAVE1=${VALOR1}
+      - CLAVE2=${VALOR2}
+      - CLAVE3=${VALOR3}
+      - CLAVE4=${VALOR4}
+      - CLAVE5=${VALOR5}
+  
+
+volumes:
+  html:
+#    external: true
+
+networks:
+  miappnet:
+
+configs:
+  nginx_default:
+    file: files/default.conf
+
+  nginx_default2:
+    external: false
+    content: |
+      server {
+        listen       70;
+        listen  [::]:70;
+        server_name  localhost;
+
+        location / {
+            root   /usr/share/nginx/html;
+            index  index.html index.htm;
+        }
+
+        error_page   500 502 503 504  /50x.html;
+        location = /50x.html {
+            root   /usr/share/nginx/html;
+        }
+      }
+      

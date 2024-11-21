@@ -1,0 +1,614 @@
+-- Informacion de docker 
+docker version
+docker info
+
+-- revisar puerto docker
+netstat -puntal | grep -i listen
+
+-- Abrir puerto tcp 
+sudo vim /lib/systemd/system/docker.service
+ExecStart=/usr/bin/dockerd -H tcp://0.0.0.0:2375 -H fd:// --containerd=/run/containerd/containerd.sock
+systemctl daemon-reload
+systemctl restart docker
+
+-- Usar docker remoto
+docker -H <IP host> version
+
+-- Docker hub
+docker search nginx
+docker search httpd
+docker pull httpd
+docker pull nginx
+
+docker image history
+comparar docker history con docker hub
+docker image inspect
+
+-- listar imagenes
+docker image ls
+docker images 
+
+
+-- PRÁCTICA RECUPERACION DE SOCKET DE DOCKER
+systemctl stop docker
+systemctl restart docker.socket
+systemctl start docker
+
+
+-- Abrir el puerto docker TCP por configuracion
+
+- Quitar los parametros del service /lib/systemd/system/docker.service
+ExecStart=/usr/bin/dockerd
+
+Crear el archivo /etc/docker/daemon.json
+
+{
+  "hosts": [
+    "fd://",
+    "tcp://0.0.0.0:2375"
+  ],
+  "containerd": "/run/containerd/containerd.sock"
+}
+
+systemctl daemon-reload
+systemctl restart docker
+
+
+-- PRACTICA CONTENEDOR REMOTO PRIVILEGED
+- local
+docker run -d --name privileged ubuntu sleep 1d
+
+- levantamos un contenedor privilegiado
+docker -H <IP host>:2375 version
+docker -H dockerserver:2375 run -d --privileged ubuntu sleep 1d
+
+- creamos una linea de comandos en el contenedor privilegiado
+docker exec -it <container> /bin/bash
+
+- montamos el fs del host en el contenedor
+mount /dev/sda1 /mnt
+ls /mnt
+
+# Acceder a /etc/passwd y /etc/shadow del host desde dentro del contenedor
+cat /mnt/etc/passwd
+cat /mnt/etc/shadow
+cat /mnt/etc/environment
+cd /mnt/var/lib/docker/volumes
+
+
+-- PRÁCTICA CREACIÓN Y USO DE CERTIFICADOS DOCKER
+
+- Creamos los certificados necesarios para asegurar el puerto docker remoto
+
+
+- Crear certificado del CA
+openssl genrsa -aes256 -out ca-key.pem 4096
+openssl req -new -x509 -days 365 -key ca-key.pem -sha256 -out ca.pem
+
+
+- Crear certificado para el docker daemon 
+
+- creamos una variable con el nombre del host docker server
+export HOST=<dockerserver> #usamos un nombre para el servidor docker que sea resuelto por el dns 
+– verificamos la variable
+echo $HOST
+
+openssl genrsa -out server-key.pem 4096
+openssl req -subj "/CN=$HOST" -sha256 -new -key server-key.pem -out server.csr
+echo subjectAltName = DNS:$HOST,IP:<IP host>,IP:127.0.0.1 >> extfile.cnf
+echo extendedKeyUsage = serverAuth >> extfile.cnf
+
+openssl x509 -req -days 365 -sha256 -in server.csr -CA ca.pem -CAkey ca-key.pem \
+  -CAcreateserial -out server-cert.pem -extfile extfile.cnf
+  
+
+--Crear certificado para el docker cliente
+openssl genrsa -out key.pem 4096
+openssl req -subj '/CN=client' -new -key key.pem -out client.csr
+echo extendedKeyUsage = clientAuth > extfile-client.cnf
+
+openssl x509 -req -days 365 -sha256 -in client.csr -CA ca.pem -CAkey ca-key.pem \
+  -CAcreateserial -out cert.pem -extfile extfile-client.cnf
+
+- Borramos archivos temporales no necesarios
+rm -v client.csr server.csr extfile.cnf extfile-client.cnf
+
+- si existe error vemos el log
+journalctl -xu docker.service
+
+- copiar los archivos al servidor remoto
+scp server.crt $HOST:/home/sramos/certs
+
+
+- aplicamos los certificados en el docker server
+{
+  "hosts": [
+    "fd://",
+    "tcp://0.0.0.0:2376"
+  ],
+  "containerd": "/run/containerd/containerd.sock",
+  "tlscert": "/etc/docker/certs/server.crt",
+  "tlskey": "/etc/docker/certs/server.key",
+  "tlscacert": "/etc/docker/certs/ca.crt",
+  "tlsverify": true,
+  "tls": true
+}
+
+- usamos los certificados en el cliente 
+docker --tlsverify \
+    --tlscacert=ca.pem \
+    --tlscert=cert.pem \
+    --tlskey=key.pem \
+    -H=$HOST:2376 version
+
+- usamos estas variables de entorno para no escribir cada ves los ecrtificados por cada comando
+export DOCKER_HOST=tcp://$HOST:2376
+export DOCKER_TLS_VERIFY=1
+export DOCKER_CERT_PATH=/mnt/c/docker/certs/client
+
+- borramos las variables en cas de ser necesario
+unset DOCKER_HOST
+unset DOCKER_TLS_VERIFY
+unset DOCKER_CERT_PATH
+
+
+-- IMAGENES
+
+docker images 
+docker image ls 
+
+- filtros 
+- filtro por imagen usada
+docker images --filter=reference='nginx:la*'
+docker images --filter "label=org.opencontainers.image.version=24.04"
+
+- "dangling=true" se refiere a imagenes huerfanas
+docker images --filter "dangling=true"
+
+
+-- docker images --digest
+- digest es una huella criptografica única que se genera a partir del contenido completo de la imagen
+docker run <digests>
+
+
+
+-- EXPORTAR IMPORTAR IMAGENES 
+- format tar
+docker image save <nombre_imagen>:<tag> -o <nombre_archivo>.tar
+-formato tar.gz
+docker image save <nombre_imagen>:<tag> | gzip > <nombre_archivo>.tar.gz
+
+- descomprimir la imagen
+tar -xvf <nombre_archivo>.tar -C <folder>
+ 
+- descomprimir la imagen
+gzip -d mi_imagen_backup.tar.gz  # Descomprime el archivo
+
+- importar desde archivo a imagen
+docker image load -i mi_imagen_backup.tar
+
+
+
+-- BORRAR IMAGENES 
+docker image rm <ID|NAME>
+docker rmi <ID|NAME>
+
+- borra imagenes no usadas
+docker image prune 
+
+-- CORRER IMAGENES 
+observar el CMD de ambas imagenes
+docker inspect nginx
+docker inspect alpine
+
+docker run -d nginx
+docker run -d alpine
+
+- correr y borrar
+docker run --rm <image>
+
+- crear, correr imagenes
+docker create nginx 
+docker start container-id
+
+- detener e iniciar
+docker stop container-id
+docker start  
+
+- logs
+docker logs -f container-id
+docker inspect container-id
+
+docker pause container-id
+# congela los procesos del contenedor y estos no consumen cpu, se mantiene la memoria y demas recursos
+# necesario en casos de necesitar liberar recursos de CPU, para esto uso los signals del SO SIGSTOP
+docker unpause container-id
+
+- eviar señal de kill
+docker container kill --signal=9 container-id
+
+- ejecutar comandos
+docker container exec container-id comando
+docker container exec -it container-id comando
+
+- variables de entorno
+docker run -d -e VAR1=valor1 -e VAR2=valor2 <IMAGE>
+- workdir
+docker run -d -w /usr/share <IMAGE>
+- username
+docker run -d -u nginx <IMAGE>
+
+
+- Espera a que el contenedor entregue un codigo de salida, apto para contenedores que realizan tareas especificas
+- y es necesario saber si terminó de manera correcta
+docker container wait 
+- cuando finaliza revisamos el codigo de salida
+echo $?
+
+
+- muestra las estadisticas de uso de recursos de los contenedores
+docker stats container-id container-id
+
+- reinicia el contenedor ya sea porque dejo de responder, o existio cambios en su configuracion 
+docker container restart container-id
+
+- rename
+docker container rename container-id nuevo_nombre
+
+- exportar importar contenedores desde y hacia imagenes
+docker export <container-id> -o <archivo.tar>
+docker import <archivo.tar> <nombreimagen>:tag
+
+- en un solo paso
+docker export <container-id> | docker import - <nombreimagen>:tag
+
+- con puerto
+docker run -d -p 8080:80 -e ENV_VAR="Variable de entorno" ramossantiago79/nginxenv 
+
+
+-- EXPORTAR EL ESTADO ACTUAL DE UN CONTENEDOR A UNA IMAGEN DOCKER 
+-- ENFOQUE RECOMENDADO PARA SALVAR CAMBIOS EN UNA IMAGEN
+docker container commit <container-id> imagen:tag
+docker container commit <container-id> imagen:tag -a "Santiago Ramos" -m "Añadido editores de texto"
+
+docker run -d nginx --name basenginx
+	apt update 
+	apt install vim -y
+
+docker container commit -a "Santiago Ramos" -m "add vim editor" <container-id> nginxvim:latest
+docker container commit -a "Santiago Ramos" -m "change expose port" -c "EXPOSE 8080" <container-id> nginxcustomport:latest
+docker container commit <container-id> nginxvim:latest -a "Santiago Ramos" -m "change expose port" -c "CMD /start.sh"
+
+
+-- DOCKERFILE
+
+Docker build ....
+- Sobreescribe el CMD
+docker run -d myubuntu sh -c "while true; do echo $(id); sleep 2; done"
+docker run -d myubuntu /start2.sh
+
+- sobreescribir el entrypoint
+docker run -d --entrypoint sh myubuntu -c 'while true; do echo "nuevo entry"; sleep 3; done'
+
+
+-- PORTS
+
+- simular un puerto udp
+docker run -d --name udp-server -p 12345:12345/udp alpine nc -lu 12345
+nc -u <ip host> 12345
+
+docker run -d -m 512MB --cpus 0.5 nginx
+
+docker run -d -m 512MB --cpus 0.5 --cpu-shares 100 nginx
+
+
+-- VOLUMENES
+
+-- practica CAPA DE USUARIO
+
+docker create volume <name>
+docker volume ls 
+
+docker volume inspect <name>
+docker volume prune
+docker volume rm <name>
+
+- practica crear su propio volumen
+- practica verificar si se dieron cuenta de que el volumen no existe 
+- practica crear volumen en un docker sencillo
+- practica volumenes que se llenan solos vs los que no se llenan
+
+-- practica mount volume
+
+docker run -d -v html:/usr/share/nginx/ -p 8080:80 --name nginx1 nginx
+docker run -d -v html:/usr/share/nginx/ -p 9090:80 --name nginx2 nginx
+docker run -d -v html:/usr/share/nginx/:ro -p 9090:80 --name nginx3 nginx
+
+docker run -d --mount type=volume,source=html,target=/usr/share/nginx/,readonly -p 8090:80 --name nginx4 nginx
+docker run -d --mount type=volume,source=html,target=/usr/share/nginx/,ro -p 8090:80 --name nginx4 nginx
+
+- practica subfolder 
+
+docker volume create logs
+docker run --rm \
+  --mount src=logs,dst=/logs \
+  alpine mkdir -p /logs/app1 /logs/app2
+docker run -d \
+  --name=app1 \
+  --mount src=logs,dst=/var/log/app1/,volume-subpath=app1 \
+  app1:latest
+docker run -d \
+  --name=app2 \
+  --mount src=logs,dst=/var/log/app2,volume-subpath=app2 \
+  app2:latest
+
+
+
+-- practica mount bind
+
+docker run -d -v /mnt/c/docker/volumen/:/volumen --name nginx1 nginx
+docker run -d --mount type=bind,source=/mnt/c/docker/volumen/,target=/volumen --name nginx2 nginx
+docker run -d --mount type=bind,source=/mnt/c/docker/volumen/,target=/usr/share/nginx/html --name nginx3 nginx
+docker run -d --mount type=bind,source=/mnt/c/docker/volumen/,target=/usr/share/nginx/html,ro --name nginx3 nginx
+
+-- practica montar dañando el fs del contenedor
+docker run -d --mount type=bind,source=/mnt/c/docker/volumen/,target=/usr --name nginx5 nginx
+
+
+- docker mount tmpfs
+
+docker run -d --mount type=tmpfs,target=/usr/share/nginx/html --name nginx1 -p 8080:80 nginx
+docker run -d --mount type=tmpfs,target=/tmpfs,tmpfs-size=2048,tmpfs-mode=700 --name nginx2 -p 8080:80 nginx
+
+
+-- DOCKER NETWORK
+
+docker network ls
+docker network inspect bridge
+
+
+
+
+-- PRÁCTICA NETWORK CONTAINER-HOST
+
+COMPORTAMIENTO EN EL DOCKER REMOTO
+
+-- 1
+docker run -d busybox sleep 1d
+
+telnet host.docker.internal:8080
+No encuentra la direccion host.docker.internal
+
+telnet 172.17.0.1:8080
+Si encuentra la direccion
+
+-- 2
+docker run -d --add-host=host.docker.internal:host-gateway busybox sleep 1d
+
+telnet host.docker.internal:8080
+SI encuentra la direccion host.docker.internal
+
+telnet 172.17.0.1:8080
+Si encuentra la direccion
+
+
+
+COMPORTAMIENTO EN EL DOCKER WSL
+
+-- 1
+
+docker run -d busybox sleep 1d
+
+telnet host.docker.internal:8080
+SI encuentra la direccion host.docker.internal
+
+telnet 172.17.0.1:8080
+NO encuentra la direccion
+
+telnet <ip wsl eth0>:8080
+SI encuentra la direccion
+
+
+-- 2 
+docker run -d --add-host=host.docker.internal:host-gateway busybox sleep 1d
+telnet host.docker.internal:8080
+SI encuentra la direccion host.docker.internal
+
+telnet 172.17.0.1:8080
+NO encuentra la direccion
+
+telnet <ip wsl eth0>:8080
+SI encuentra la direccion
+
+telnet <ip red windows>:8080
+SI encuentra la direccion
+
+
+
+- abrir puerto tcp para pruebas en ubuntu
+nc -l -p 8080
+
+- abrir puerto tcp para pruebas en windows
+ncat -l 0.0.0.0 8080
+
+
+- PRÁCTICA CONNECT CONTAINER OVER DOCKER NETWORKS BRIDGE
+
+docker run -d --name nginx1 nginx
+docker run -d --name nginx2 nginx
+
+
+docker network create mired
+
+docker run -d --name nginx3 --network mired nginx
+docker run -d --name nginx4 --network mired nginx
+docker run -d --name nginx5 --hostname nginx5 --network mired nginx
+
+- conectar contenedor a otra red
+docker network connect mired nginx1
+
+- desconectar de la red
+docker network disconnect mired nginx1
+
+- red custom
+docker network create \
+  --driver bridge \
+  --subnet 192.168.1.0/24 \
+  --gateway 192.168.1.1 \
+  my_custom_network
+
+
+-- OVERLAY NETWORK
+docker network create -d overlay --attachable my-attachable-overlay
+--attachable option enables both standalone containers and Swarm services to connect to the overlay network. Without --attachable, only Swarm services can connect to the network.
+
+
+-- MACVLAN
+- ACTIVAR MODO PROMISCUO DE LA TARJETA
+
+sudo ip link set eth0 promisc on
+ó
+sudo ifconfig eth0 promisc
+
+sudo ip link set eth0 promisc off
+ó
+sudo ifconfig eth0 -promisc
+
+docker network create -d macvlan   --subnet=172.16.86.0/24   --gateway=172.16.86.1   -o parent=eth0 pub_net
+docker run -d --network pub_net nginx
+
+
+-- NONE
+docker run -d --network none appjava
+
+-- HOST
+docker run -d --network host nginx
+
+- probar
+http://localhost
+
+
+
+-- DOCKER MULTIPLATAFORMA
+
+-  ver que arquitecturas soporta nuestra docker build
+docker buildx inspect --bootstrap
+
+docker buildx build --platform linux/arm64,linux/amd64 -t ramossantiago79/multi:latest .
+
+docker manifest inspect -v ramossantiago79/multi:latest | grep architecture
+
+docker run -d --platform linux/arm6docker4 ramossantiago79/multi:latest
+
+docker buildx build --push --platform linux/arm64,linux/amd64 -t ramossantiago79/multi:latest .
+
+
+-  DOCKER COMPOSE 
+
+https://github.com/dockersamples
+https://github.com/docker/awesome-compose
+
+
+-  ver la configuracion aplicada
+docker-compose config
+
+- levantar los contenedores
+docker-compose up 
+docker-compose up -d
+
+- detener los contenedores
+docker-compose stop
+docker-compose stop <service>
+
+- ver estado de los contenedores
+docker-compose ps -a
+
+- levantar contenedor
+docker-compose start <service>
+
+- correr un servicio por fuera del compose, pero con su definicion 
+docker-compose run -d <service> 
+docker-compose run -d --service-ports <service>
+docker-compose run -d --publish 9090:80 <service>
+
+- ver el puerto del host
+docker-compose port web 80
+
+- ver la imagenes del compose 
+docker-compose images
+
+- ver logs 
+docker-compose logs 
+docker-compose logs -f
+docker-compose logs <service>
+
+- manejar estado
+docker-compose pause
+docker-compose unpause
+docker-compose restart
+
+- remover contenedores
+docker-compose rm
+docker-compose rm -sf
+
+- remover contenedores y redes 
+docker-compose down
+
+- remover contenedores, redes y volumenes
+docker-compose down -v --dry-run
+docker-compose down -v
+
+- ejecutar comandos
+docker-compose exec <service> </bin/bash>
+
+- subir cn archivo de ambiente diferente
+docker-compose --env-file .envqa up -d
+
+- forzar despues de usar volumenes 
+docker-compose up -d --force-recreate web2
+
+- manejar profiles
+docker-compose --profile check up -d
+docker-compose --profile check up -d
+ 
+docker-compose --profile "*" stop
+
+- definir profiles por defecto 
+export COMPOSE_PROFILES=serv,check
+
+
+-- DOCKER BEST PRACTICES
+
+- hacer lint del dockerfile
+docker run --rm -i hadolint/hadolint < Dockerfile
+
+- no exponer el docker d docker
+docker run -d -v /var/run/docker.sock:/var/run/docker.sock docker:cli sleep 1d
+
+- escanear imagenes
+docker scout cves springapp
+trivy image springapp
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

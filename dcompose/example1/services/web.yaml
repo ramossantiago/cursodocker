@@ -1,0 +1,19 @@
+services:
+  web:
+    image: nginx
+    container_name: web1
+    depends_on:
+      - backend
+    volumes:
+      - type: volume
+        source: html
+        target: /usr/share/nginx
+        read_only: false
+    networks:
+      - miappnet
+    environment:
+      - CLAVE1=${VALOR1}
+      - CLAVE2=${VALOR2}
+      - CLAVE3=${VALOR3}
+      - CLAVE4=${VALOR4}
+      - CLAVE5=${VALOR5}  
