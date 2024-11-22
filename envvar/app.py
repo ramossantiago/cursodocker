@@ -3,7 +3,7 @@ from flask import Flask, render_template
 
 app = Flask(__name__)
 
-color = os.environ.get('APP_COLOR', 'WHITE') 
+color = os.environ.get('APP_COLOR', 'BLUE') 
 
 @app.route("/")
 def main():
